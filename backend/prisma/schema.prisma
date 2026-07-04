@@ -1,0 +1,274 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+enum UserStatus {
+  ACTIVE
+  DISABLED
+}
+
+enum SenderIdStatus {
+  PENDING
+  APPROVED
+  REJECTED
+}
+
+enum PaymentStatus {
+  PENDING
+  PROCESSING
+  SUCCESSFUL
+  FAILED
+  CANCELLED
+}
+
+enum PaymentProvider {
+  MTN_MOMO
+}
+
+enum WalletTransactionType {
+  CREDIT
+  DEBIT
+  ADJUSTMENT
+}
+
+enum WalletTransactionSource {
+  PAYMENT
+  CAMPAIGN
+  MANUAL_TOP_UP
+  CORRECTION
+}
+
+enum CampaignStatus {
+  DRAFT
+  QUEUED
+  SENDING
+  SENT
+  FAILED
+}
+
+enum DeliveryStatus {
+  QUEUED
+  SENT
+  FAILED
+}
+
+model Client {
+  id                 String              @id @default(uuid())
+  name               String
+  contactEmail       String
+  contactPhone       String?
+  isActive           Boolean             @default(true)
+  wallet             WalletAccount?
+  users              User[]
+  senderIds          SenderId[]
+  contacts           Contact[]
+  contactGroups      ContactGroup[]
+  messageTemplates   MessageTemplate[]
+  campaigns          Campaign[]
+  payments           Payment[]
+  walletTransactions WalletTransaction[]
+  auditLogs          AuditLog[]
+  createdAt          DateTime            @default(now())
+  updatedAt          DateTime            @updatedAt
+}
+
+model Role {
+  id          String   @id @default(uuid())
+  name        String   @unique
+  description String?
+  users       User[]
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+}
+
+model User {
+  id           String     @id @default(uuid())
+  clientId     String?
+  roleId       String
+  email        String     @unique
+  passwordHash String
+  fullName     String
+  status       UserStatus @default(ACTIVE)
+  isSuperAdmin Boolean    @default(false)
+  client       Client?    @relation(fields: [clientId], references: [id])
+  role         Role       @relation(fields: [roleId], references: [id])
+  auditLogs    AuditLog[]
+  createdAt    DateTime   @default(now())
+  updatedAt    DateTime   @updatedAt
+}
+
+model SmsPackage {
+  id          String    @id @default(uuid())
+  name        String    @unique
+  amountGhs   Decimal   @db.Decimal(12, 2)
+  smsUnits    Int
+  isActive    Boolean   @default(true)
+  sortOrder   Int       @default(0)
+  payments    Payment[]
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+}
+
+model WalletAccount {
+  id        String   @id @default(uuid())
+  clientId  String   @unique
+  balance   Int      @default(0)
+  client    Client   @relation(fields: [clientId], references: [id])
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+model WalletTransaction {
+  id              String                  @id @default(uuid())
+  clientId        String
+  type            WalletTransactionType
+  source          WalletTransactionSource
+  units           Int
+  balanceBefore   Int
+  balanceAfter    Int
+  paymentId       String?
+  campaignId      String?
+  note            String?
+  idempotencyKey  String                  @unique
+  client          Client                  @relation(fields: [clientId], references: [id])
+  payment         Payment?                @relation(fields: [paymentId], references: [id])
+  campaign        Campaign?               @relation(fields: [campaignId], references: [id])
+  createdAt       DateTime                @default(now())
+
+  @@index([clientId, createdAt])
+}
+
+model Payment {
+  id                  String          @id @default(uuid())
+  clientId            String
+  smsPackageId        String
+  provider            PaymentProvider @default(MTN_MOMO)
+  status              PaymentStatus   @default(PENDING)
+  amountGhs           Decimal         @db.Decimal(12, 2)
+  smsUnits            Int
+  momoNumber          String
+  providerReference   String          @unique
+  providerStatus      String?
+  providerRawResponse Json?
+  creditedAt          DateTime?
+  client              Client          @relation(fields: [clientId], references: [id])
+  smsPackage          SmsPackage      @relation(fields: [smsPackageId], references: [id])
+  walletTransactions  WalletTransaction[]
+  createdAt           DateTime        @default(now())
+  updatedAt           DateTime        @updatedAt
+
+  @@index([clientId, createdAt])
+}
+
+model SenderId {
+  id        String         @id @default(uuid())
+  clientId  String
+  name      String
+  status    SenderIdStatus @default(PENDING)
+  client    Client         @relation(fields: [clientId], references: [id])
+  createdAt DateTime       @default(now())
+  updatedAt DateTime       @updatedAt
+
+  @@unique([clientId, name])
+}
+
+model Contact {
+  id          String               @id @default(uuid())
+  clientId    String
+  phone       String
+  firstName   String?
+  lastName    String?
+  metadata    Json?
+  client      Client               @relation(fields: [clientId], references: [id])
+  memberships ContactGroupMember[]
+  createdAt   DateTime             @default(now())
+  updatedAt   DateTime             @updatedAt
+
+  @@unique([clientId, phone])
+  @@index([clientId])
+}
+
+model ContactGroup {
+  id          String               @id @default(uuid())
+  clientId    String
+  name        String
+  client      Client               @relation(fields: [clientId], references: [id])
+  memberships ContactGroupMember[]
+  createdAt   DateTime             @default(now())
+  updatedAt   DateTime             @updatedAt
+
+  @@unique([clientId, name])
+}
+
+model ContactGroupMember {
+  contactId String
+  groupId   String
+  contact   Contact      @relation(fields: [contactId], references: [id])
+  group     ContactGroup @relation(fields: [groupId], references: [id])
+  createdAt DateTime     @default(now())
+
+  @@id([contactId, groupId])
+}
+
+model MessageTemplate {
+  id        String   @id @default(uuid())
+  clientId  String
+  name      String
+  body      String
+  client    Client   @relation(fields: [clientId], references: [id])
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([clientId, name])
+}
+
+model Campaign {
+  id             String              @id @default(uuid())
+  clientId       String
+  senderId       String
+  title          String
+  message        String
+  totalRecipients Int                @default(0)
+  totalUnits      Int                @default(0)
+  status         CampaignStatus      @default(DRAFT)
+  providerBatchId String?
+  client         Client              @relation(fields: [clientId], references: [id])
+  recipients     CampaignRecipient[]
+  walletTransactions WalletTransaction[]
+  createdAt      DateTime            @default(now())
+  updatedAt      DateTime            @updatedAt
+
+  @@index([clientId, createdAt])
+}
+
+model CampaignRecipient {
+  id              String         @id @default(uuid())
+  campaignId      String
+  phone           String
+  units           Int
+  deliveryStatus  DeliveryStatus @default(QUEUED)
+  providerMessageId String?
+  errorMessage     String?
+  campaign        Campaign       @relation(fields: [campaignId], references: [id])
+  createdAt       DateTime       @default(now())
+  updatedAt       DateTime       @updatedAt
+}
+
+model AuditLog {
+  id        String   @id @default(uuid())
+  clientId  String?
+  actorId   String?
+  action    String
+  entity    String
+  entityId  String?
+  metadata  Json?
+  client    Client?  @relation(fields: [clientId], references: [id])
+  actor     User?    @relation(fields: [actorId], references: [id])
+  createdAt DateTime @default(now())
+
+  @@index([clientId, createdAt])
+}
